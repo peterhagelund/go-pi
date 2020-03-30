@@ -21,7 +21,11 @@
 package pi
 
 import (
+	"bytes"
 	"errors"
+	"image"
+	_ "image/jpeg" // Import to register JPEG
+	_ "image/png"  // Import to register PNG
 	"io"
 	"syscall"
 	"unsafe"
@@ -73,6 +77,8 @@ type Camera interface {
 	SetFormat(desc string, width uint32, height uint32) (uint32, uint32, error)
 	// GrabFrame grabs a single frame.
 	GrabFrame() ([]byte, error)
+	// GrabImage grabs a single frame and returns it as an image.
+	GrabImage() (image.Image, string, error)
 }
 
 type camera struct {
@@ -266,6 +272,19 @@ func (c *camera) GrabFrame() ([]byte, error) {
 	frame := make([]byte, buffer.BytesUsed)
 	copy(frame, data)
 	return frame, nil
+}
+
+func (c *camera) GrabImage() (image.Image, string, error) {
+	frame, err := c.GrabFrame()
+	if err != nil {
+		return nil, "", err
+	}
+	buffer := bytes.NewBuffer(frame)
+	image, name, err := image.Decode(buffer)
+	if err != nil {
+		return nil, "", err
+	}
+	return image, name, nil
 }
 
 func (c *camera) queryCapabilities() error {
