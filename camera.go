@@ -82,9 +82,9 @@ type Camera interface {
 }
 
 type camera struct {
-	fd           int
-	capabilities *v4l2.Capabilities
-	fmtDescs     []*v4l2.FmtDesc
+	fd         int
+	capability *v4l2.Capability
+	fmtDescs   []*v4l2.FmtDesc
 }
 
 // OpenCamera opens the camera device at the specified path.
@@ -120,7 +120,7 @@ func (c *camera) Close() error {
 		return err
 	}
 	c.fd = -1
-	c.capabilities = nil
+	c.capability = nil
 	c.fmtDescs = nil
 	return nil
 }
@@ -129,21 +129,21 @@ func (c *camera) Driver() (string, error) {
 	if c.fd == -1 {
 		return "", syscall.EINVAL
 	}
-	return v4l2.BytesToString(c.capabilities.Driver[:]), nil
+	return v4l2.BytesToString(c.capability.Driver[:]), nil
 }
 
 func (c *camera) Card() (string, error) {
 	if c.fd == -1 {
 		return "", syscall.EINVAL
 	}
-	return v4l2.BytesToString(c.capabilities.Card[:]), nil
+	return v4l2.BytesToString(c.capability.Card[:]), nil
 }
 
 func (c *camera) BusInfo() (string, error) {
 	if c.fd == -1 {
 		return "", syscall.EINVAL
 	}
-	return v4l2.BytesToString(c.capabilities.BusInfo[:]), nil
+	return v4l2.BytesToString(c.capability.BusInfo[:]), nil
 }
 
 func (c *camera) Formats() ([]string, error) {
@@ -288,11 +288,11 @@ func (c *camera) GrabImage() (image.Image, string, error) {
 }
 
 func (c *camera) queryCapabilities() error {
-	capabilities := &v4l2.Capabilities{}
-	if err := v4l2.Ioctl(c.fd, v4l2.VidIocQueryCap, uintptr(unsafe.Pointer(capabilities))); err != nil {
+	capability := &v4l2.Capability{}
+	if err := v4l2.Ioctl(c.fd, v4l2.VidIocQueryCap, uintptr(unsafe.Pointer(capability))); err != nil {
 		return err
 	}
-	c.capabilities = capabilities
+	c.capability = capability
 	return nil
 }
 
@@ -317,7 +317,7 @@ func (c *camera) enumFormats() error {
 	return nil
 }
 
-func (c *camera) mapFormat(desc string) (uint32, error) {
+func (c *camera) mapFormat(desc string) (v4l2.PixFmt, error) {
 	for i := 0; i < len(c.fmtDescs); i++ {
 		description := v4l2.BytesToString(c.fmtDescs[i].Description[:])
 		if desc == description {
