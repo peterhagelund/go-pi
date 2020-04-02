@@ -178,22 +178,23 @@ func (c *camera) FrameSizes(desc string) ([]*FrameSize, error) {
 		}
 		frameSize := &FrameSize{}
 		if frameSizeEnum.Type == v4l2.FrmSizeTypeDiscrete {
-			discrete := (*v4l2.FrameSizeDiscrete)(unsafe.Pointer(&frameSizeEnum.Stepwise))
+			discrete := (*v4l2.FrameSizeDiscrete)(unsafe.Pointer(&frameSizeEnum.M))
 			frameSize.IsDiscreet = true
 			frameSize.Width = discrete.Width
 			frameSize.Height = discrete.Height
 		} else {
+			stepwise := (*v4l2.FrameSizeStepwise)(unsafe.Pointer(&frameSizeEnum.M))
 			if frameSizeEnum.Type == v4l2.FrmSizeTypeStepwise {
 				frameSize.IsStepwise = true
 			} else {
 				frameSize.IsContinuous = true
 			}
-			frameSize.MinWidth = frameSizeEnum.Stepwise.MinWidth
-			frameSize.MaxWidth = frameSizeEnum.Stepwise.MaxWidth
-			frameSize.StepWidth = frameSizeEnum.Stepwise.StepWidth
-			frameSize.MinHeight = frameSizeEnum.Stepwise.MinHeight
-			frameSize.MaxHeight = frameSizeEnum.Stepwise.MaxHeight
-			frameSize.StepHeight = frameSizeEnum.Stepwise.StepHeight
+			frameSize.MinWidth = stepwise.MinWidth
+			frameSize.MaxWidth = stepwise.MaxWidth
+			frameSize.StepWidth = stepwise.StepWidth
+			frameSize.MinHeight = stepwise.MinHeight
+			frameSize.MaxHeight = stepwise.MaxHeight
+			frameSize.StepHeight = stepwise.StepHeight
 		}
 		frameSizes = append(frameSizes, frameSize)
 		frameSizeEnum.Index++
