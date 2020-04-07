@@ -93,23 +93,24 @@ func OpenCamera(path string) (Camera, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &camera{
-		fd: fd,
-	}
 	defer func() {
 		if err != nil {
-			c.Close()
+			unix.Close(fd)
 		}
 	}()
-	err = c.queryCapabilities()
+	capability, err := v4l2.QueryCapabilities(fd)
 	if err != nil {
 		return nil, err
 	}
-	err = c.enumFormats()
+	fmtDescs, err := v4l2.EnumFormats(fd, v4l2.BufTypeVideoCapture)
 	if err != nil {
 		return nil, err
 	}
-	return c, nil
+	return &camera{
+		fd:         fd,
+		capability: capability,
+		fmtDescs:   fmtDescs,
+	}, nil
 }
 
 func (c *camera) Close() error {
@@ -165,17 +166,12 @@ func (c *camera) FrameSizes(desc string) ([]*FrameSize, error) {
 	if err != nil {
 		return nil, err
 	}
+	frameSizeEnums, err := v4l2.EnumFrameSizes(c.fd, pixFormat)
+	if err != nil {
+		return nil, err
+	}
 	frameSizes := make([]*FrameSize, 0)
-	frameSizeEnum := &v4l2.FrameSizeEnum{}
-	frameSizeEnum.PixFormat = pixFormat
-	for {
-		err := v4l2.Ioctl(c.fd, v4l2.VidIocEnumFrameSizes, uintptr(unsafe.Pointer(frameSizeEnum)))
-		if err != nil {
-			if err == syscall.EINVAL {
-				break
-			}
-			return nil, err
-		}
+	for _, frameSizeEnum := range frameSizeEnums {
 		frameSize := &FrameSize{}
 		if frameSizeEnum.Type == v4l2.FrmSizeTypeDiscrete {
 			discrete := (*v4l2.FrameSizeDiscrete)(unsafe.Pointer(&frameSizeEnum.M))
@@ -197,7 +193,6 @@ func (c *camera) FrameSizes(desc string) ([]*FrameSize, error) {
 			frameSize.StepHeight = stepwise.StepHeight
 		}
 		frameSizes = append(frameSizes, frameSize)
-		frameSizeEnum.Index++
 	}
 	return frameSizes, nil
 }
@@ -210,68 +205,35 @@ func (c *camera) SetFormat(desc string, width uint32, height uint32) (uint32, ui
 	if err != nil {
 		return 0, 0, err
 	}
-	format := &v4l2.Format{}
-	format.Type = v4l2.BufTypeVideoCapture
-	pix := (*v4l2.PixFormat)(unsafe.Pointer(&format.RawData[0]))
-	pix.Width = width
-	pix.Height = height
-	pix.PixFormat = pixFormat
-	pix.Field = v4l2.FieldNone
-	if err := v4l2.Ioctl(c.fd, v4l2.VidIocSFmt, uintptr(unsafe.Pointer(format))); err != nil {
+	width, height, err = v4l2.SetFormat(c.fd, v4l2.BufTypeVideoCapture, pixFormat, width, height)
+	if err != nil {
 		return 0, 0, err
 	}
-	return pix.Width, pix.Height, nil
+	return width, height, nil
 }
 
 func (c *camera) GrabFrame() ([]byte, error) {
 	if c.fd == -1 {
 		return nil, syscall.EINVAL
 	}
-	requestBuffers := &v4l2.RequestBuffers{}
-	requestBuffers.Count = 4
-	requestBuffers.Type = v4l2.BufTypeVideoCapture
-	requestBuffers.Memory = v4l2.MemoryMMap
-	if err := v4l2.Ioctl(c.fd, v4l2.VidIocReqBufs, uintptr(unsafe.Pointer(requestBuffers))); err != nil {
+	count, err := v4l2.RequestDriverBuffers(c.fd, 4, v4l2.BufTypeVideoCapture, v4l2.MemoryMmap)
+	if err != nil {
 		return nil, err
 	}
-	buffers := make([][]byte, 0)
-	var index uint32
-	for index = 0; index < requestBuffers.Count; index++ {
-		buffer := &v4l2.Buffer{}
-		buffer.Index = index
-		buffer.Type = requestBuffers.Type
-		buffer.Memory = requestBuffers.Memory
-		if err := v4l2.Ioctl(c.fd, v4l2.VidIocQueryBuf, uintptr(unsafe.Pointer(buffer))); err != nil {
-			return nil, err
-		}
-		offset := int64(buffer.M)
-		length := int(buffer.Length)
-		data, err := unix.Mmap(c.fd, offset, length, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
-		if err != nil {
-			return nil, err
-		}
-		defer unix.Munmap(data)
-		buffers = append(buffers, data)
-		if err := v4l2.Ioctl(c.fd, v4l2.VidIocQBuf, uintptr(unsafe.Pointer(buffer))); err != nil {
-			return nil, err
-		}
-	}
-	if err := v4l2.Ioctl(c.fd, v4l2.VidIocStreamOn, uintptr(unsafe.Pointer(&requestBuffers.Type))); err != nil {
+	defer v4l2.RequestDriverBuffers(c.fd, 0, v4l2.BufTypeVideoCapture, v4l2.MemoryMmap)
+	buffers, err := v4l2.MmapBuffers(c.fd, count, v4l2.BufTypeVideoCapture)
+	if err != nil {
 		return nil, err
 	}
-	defer v4l2.Ioctl(c.fd, v4l2.VidIocStreamOff, uintptr(unsafe.Pointer(&requestBuffers.Type)))
-	if err := v4l2.WaitFd(c.fd); err != nil {
+	defer v4l2.MunmapBuffers(buffers)
+	if err := v4l2.StreamOn(c.fd, v4l2.BufTypeVideoCapture); err != nil {
 		return nil, err
 	}
-	buffer := &v4l2.Buffer{}
-	buffer.Type = requestBuffers.Type
-	buffer.Memory = requestBuffers.Memory
-	if err := v4l2.Ioctl(c.fd, v4l2.VidIocDQBuf, uintptr(unsafe.Pointer(buffer))); err != nil {
+	defer v4l2.StreamOff(c.fd, v4l2.BufTypeVideoCapture)
+	frame, err := v4l2.GrabFrame(c.fd, v4l2.BufTypeVideoCapture, v4l2.MemoryMmap, buffers)
+	if err != nil {
 		return nil, err
 	}
-	data := buffers[buffer.Index]
-	frame := make([]byte, buffer.BytesUsed)
-	copy(frame, data)
 	return frame, nil
 }
 
@@ -286,36 +248,6 @@ func (c *camera) GrabImage() (image.Image, string, error) {
 		return nil, "", err
 	}
 	return image, name, nil
-}
-
-func (c *camera) queryCapabilities() error {
-	capability := &v4l2.Capability{}
-	if err := v4l2.Ioctl(c.fd, v4l2.VidIocQueryCap, uintptr(unsafe.Pointer(capability))); err != nil {
-		return err
-	}
-	c.capability = capability
-	return nil
-}
-
-func (c *camera) enumFormats() error {
-	var index uint32 = 0
-	formats := make([]*v4l2.FmtDesc, 0, 8)
-	for {
-		fmtDesc := &v4l2.FmtDesc{}
-		fmtDesc.Index = index
-		fmtDesc.Type = v4l2.BufTypeVideoCapture
-		err := v4l2.Ioctl(c.fd, v4l2.VidIocEnumFmt, uintptr(unsafe.Pointer(fmtDesc)))
-		if err != nil {
-			if err == syscall.EINVAL {
-				break
-			}
-			return err
-		}
-		formats = append(formats, fmtDesc)
-		index++
-	}
-	c.fmtDescs = formats
-	return nil
 }
 
 func (c *camera) mapFormat(desc string) (v4l2.PixFmt, error) {
