@@ -159,6 +159,7 @@ func NewGPIO(pin Pin, direction Direction) (GPIO, error) {
 	registers[offset] &^= (7 << count)
 	if direction == DirectionOutput {
 		registers[offset] |= (1 << count)
+		registers[GpClr0] = id
 	}
 	return &gpio{
 		pin:       pin,
